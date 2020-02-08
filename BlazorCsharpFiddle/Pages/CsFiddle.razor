@@ -1,0 +1,156 @@
+﻿@page "/"
+
+@using System.IO;
+@using System.Linq;
+@using System.Reflection;
+@using Microsoft.CodeAnalysis;
+@using Microsoft.CodeAnalysis.CSharp;
+
+@inject HttpClient client
+<div class="container">
+    <div class="btn-toolbar p-3 justify-content-between" role="toolbar" aria-label="Toolbar with button groups">
+        <div class="btn-group">
+            <button type="button" class="btn btn-primary" @onclick="OnRunClick">Run</button>
+        </div>
+        <div class="btn-group">
+            <span class="animated @(_references.Any() ? "fadeout" : "fadein")">Loading</span>
+            <span class="animated @(isCompiling ? "fadein" : "fadeout")">Compiling</span>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6 col-12">
+            <p>Code:</p>
+            <textarea @oninput="async (ui) => OnCodeChanged(ui.Value?.ToString())" @bind="code" class="form-control" rows="15"></textarea>
+        </div>
+        <div class="col-md-6 col-12">
+            <p>Output:</p>
+            <div>
+                @currentOutput
+            </div>
+            @if (!string.IsNullOrEmpty(errors))
+            {
+                <p>Error:</p>
+                <div class="errors">
+                    @errors
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string code =
+@"using System;
+
+namespace HWdTech
+{
+    public class HelloWorld
+    {
+        public void Write()
+        {
+            Console.WriteLine(""Hello World!"");
+        }
+    }
+}";
+
+    private bool isCompiling = false;
+    private string currentOutput = "";
+    private string errors = "";
+
+    private IEnumerable<MetadataReference> _references = new List<MetadataReference>();
+
+    protected async override Task OnInitializedAsync()
+    {
+        var refs = AppDomain.CurrentDomain.GetAssemblies();
+
+        var references = new List<MetadataReference>();
+
+        foreach (var reference in refs.Where(x => !x.IsDynamic && !string.IsNullOrWhiteSpace(x.Location)))
+        {
+            var stream = await client.GetStreamAsync($"_framework/_bin/{reference.Location}");
+            references.Add(MetadataReference.CreateFromStream(stream));
+        }
+
+        _references = references;
+    }
+
+    private async void OnCodeChanged(string value)
+    {
+        await TryToExecute(value);
+    }
+
+    private async void OnRunClick()
+    {
+        await TryToExecute(code);
+    }
+
+    private async Task TryToExecute(string code)
+    {
+        isCompiling = true;
+        errors = "";
+        await Task.Delay(1);
+
+        try
+        {
+            var syntaxTree = CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.Latest));
+
+            var assemblyName = Path.GetRandomFileName();
+
+            var compilation = CSharpCompilation.Create(
+                assemblyName,
+                syntaxTrees: new[] { syntaxTree },
+                references: _references,
+                options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+            using (var ms = new MemoryStream())
+            {
+                var result = compilation.Emit(ms);
+
+                if (!result.Success)
+                {
+                    var failures = result.Diagnostics.Where(diagnostic =>
+                        diagnostic.IsWarningAsError ||
+                        diagnostic.Severity == DiagnosticSeverity.Error);
+
+                    foreach (Diagnostic diagnostic in failures)
+                    {
+                        errors += Environment.NewLine + string.Format("{0}: {1}", diagnostic.Id, diagnostic.GetMessage());
+                    }
+                }
+                else
+                {
+                    ms.Seek(0, SeekOrigin.Begin);
+                    var assembly = Assembly.Load(ms.ToArray());
+
+                    var type = assembly.GetTypes().First();
+                    var obj = Activator.CreateInstance(type);
+
+                    var method = type.GetMethod("Main") ?? type.GetMethods().First(m => !m.GetParameters().Any());
+
+                    var currentConsoleOut = Console.Out;
+                    var writer = new StringWriter();
+                    Console.SetOut(writer);
+
+                    try
+                    {
+                        method.Invoke(obj, new object[0]);
+                    }
+                    finally
+                    {
+                        Console.SetOut(currentConsoleOut);
+                    }
+
+                    currentOutput = writer.ToString();
+                }
+            }
+        }
+        catch(Exception ex)
+        {
+            currentOutput = ex.ToString();
+        }
+
+        isCompiling = false;
+        base.StateHasChanged();
+    }
+}
