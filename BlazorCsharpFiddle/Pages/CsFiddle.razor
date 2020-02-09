@@ -25,9 +25,7 @@
         </div>
         <div class="col-md-6 col-12">
             <p>Output:</p>
-            <div>
-                @currentOutput
-            </div>
+            <pre>@currentOutput</pre>
             @if (errors.Any())
             {
                 <div class="text-danger mt-2">
@@ -56,7 +54,7 @@ namespace HWdTech
         }
     }
 }";
-
+    private int version = 0;
     private bool isCompiling = false;
     private string currentOutput = "";
     private List<string> errors = new List<string>();
@@ -80,7 +78,15 @@ namespace HWdTech
 
     private async void OnCodeChanged(string value)
     {
-        await TryToExecute(value);
+        var currentVersion = ++version;
+
+        //debounce
+        await Task.Delay(1000);
+
+        if (version == currentVersion)
+        {
+            await TryToExecute(value);
+        }
     }
 
     private async void OnRunClick()
@@ -92,6 +98,7 @@ namespace HWdTech
     {
         isCompiling = true;
         errors.Clear();
+        base.StateHasChanged();
 
         await Task.Delay(1);
 
