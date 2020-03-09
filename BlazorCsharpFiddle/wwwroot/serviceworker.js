@@ -1,19 +1,14 @@
-﻿var cacheName = 'csharp-fiddle';
+﻿var cacheName = 'csharp-fiddle-v1';
 
-self.addEventListener('install', function (e) {
-    e.waitUntil(
-        caches.open(cacheName).then(function (cache) {
-            return cache.addAll(['/']);
-        })
-    );
-});
-self.addEventListener('activate', event => {
-    event.waitUntil(self.clients.claim());
-});
-self.addEventListener('fetch', event => {
-    event.respondWith(
-        caches.match(event.request, { ignoreSearch: true }).then(response => {
-            return response || fetch(event.request);
+self.addEventListener('fetch', (e) => {
+    e.respondWith(
+        caches.match(e.request).then((r) => {
+            return r || fetch(e.request).then((response) => {
+                return caches.open(cacheName).then((cache) => {
+                    cache.put(e.request, response.clone());
+                    return response;
+                });
+            });
         })
     );
 });
